@@ -12,9 +12,7 @@ After patching and building kernel, reboot and install kvm and kvm-intel module.
 
 # LICENSE
 
-It is distributed under the GNU General Public License - see the
-  accompanying COPYING file for more details. 
+It is distributed under the GNU General Public License(GPL) version 2 - see the
+  accompanying LICENSE file for more details. 
 
-
-You can find more detail in here(https://www.actapress.com/Abstract.aspx?paperId=456169).
 
