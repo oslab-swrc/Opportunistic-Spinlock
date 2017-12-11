@@ -1,4 +1,5 @@
 # oticke+, qspinlock+
+oticket+ and qspinlock+ is the enhanced version of paravirtualized ticket lock and queue spinlock 
 
 # What is oticket+, qspinlock+?
 
@@ -10,6 +11,7 @@ qspinlock+ ( kernel 4.9.26 )
 # How to Use
 
 After patching and building kernel, reboot and install kvm and kvm-intel module.
+(oticket+ patch: kernel 4.5.0-rc2, qspinlock+ patch: kernel 4.9.26)
 
 # LICENSE
 
