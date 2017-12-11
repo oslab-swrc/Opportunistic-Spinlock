@@ -1,11 +1,15 @@
-# otickeplus, qspinlockplus 
+# oticke+, qspinlock+
 
-# What is otickeplus, qspinlockplus?
+# What is oticket+, qspinlock+?
 
+qspinlock+ is the improved KVM-side part of the existing paravirt qspinlock. Instead of HALT EXIT in pvqspinlock, pvqspinlock+ uses hypercall to minimize a delay and boosts vcpus which is presumed to be a lock holder minimizing lock holder preemption problem. oticket+ is based on ticket spinlock which is used before qspinlock.  
+
+oticket+ ( kernel 4.5.0-rc2 )
+qspinlock+ ( kernel 4.9.26 )
 
 # How to Use
 
-If you want to use this kernel, you can usually replace it by using general kernel compilation method.
+After patching and building kernel, reboot and install kvm and kvm-intel module.
 
 # LICENSE
 
