@@ -736,6 +736,12 @@ config QUEUED_LOCK_STAT
 	  behavior of paravirtualized queued spinlocks and report
 	  them on debugfs.
 
+config QUEUED_SWPLE
+	bool "Paravirt queued spinlock swple"
+	depends on PARAVIRT_SPINLOCKS && QUEUED_SPINLOCKS
+	---help---
+	  Enable SWPLE
+
 source "arch/x86/xen/Kconfig"
 
 config KVM_GUEST

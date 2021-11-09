@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * KVM paravirt_ops implementation
  *
@@ -561,6 +562,11 @@ static void kvm_kick_cpu(int cpu)
 	unsigned long flags = 0;
 
 	apicid = per_cpu(x86_cpu_to_apicid, cpu);
+
+
+#ifdef CONFIG_QUEUED_SWPLE
+	flags = cpu ;
+#endif
 	kvm_hypercall2(KVM_HC_KICK_CPU, flags, apicid);
 }
 
@@ -583,10 +589,20 @@ static void kvm_wait(u8 *ptr, u8 val)
 	 * for irq enabled case to avoid hang when lock info is overwritten
 	 * in irq spinlock slowpath and no spurious interrupt occur to save us.
 	 */
+
+#ifdef  CONFIG_QUEUED_SWPLE
+        if (arch_irqs_disabled_flags(flags))
+                kvm_hypercall0(KVM_HC_HALT_CPU);
+        else {
+                native_irq_enable() ;
+                kvm_hypercall0(KVM_HC_HALT_CPU);
+        }
+#else
 	if (arch_irqs_disabled_flags(flags))
 		halt();
 	else
 		safe_halt();
+#endif
 
 out:
 	local_irq_restore(flags);

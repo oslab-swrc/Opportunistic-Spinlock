@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef __KVM_HOST_H
 #define __KVM_HOST_H
 
@@ -204,8 +205,24 @@ struct kvm_mmio_fragment {
 	unsigned len;
 };
 
+
+#ifdef CONFIG_QUEUED_SWPLE
+
+struct kvm_vcpu_spinlock_stat {
+       struct kvm *kvm;
+       struct kvm_vcpu *vcpu;
+       bool halted_vcpu;                 /* will tell that this is not the holder */
+       int last_boosted_vcpu;    /* whom this vcpu boosted to */
+};
+#endif
+
 struct kvm_vcpu {
 	struct kvm *kvm;
+
+#ifdef CONFIG_QUEUED_SWPLE
+	struct kvm_vcpu_spinlock_stat vcpu_spinlock_stat ;
+#endif
+
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	struct preempt_notifier preempt_notifier;
 #endif
@@ -431,6 +448,10 @@ struct kvm {
 	struct list_head devices;
 	struct dentry *debugfs_dentry;
 	struct kvm_stat_data **debugfs_stat_data;
+
+#ifdef CONFIG_QUEUED_SWPLE
+	DECLARE_BITMAP(vcpu_lock_holder, KVM_MAX_VCPUS) ;
+#endif
 };
 
 #define kvm_err(fmt, ...) \

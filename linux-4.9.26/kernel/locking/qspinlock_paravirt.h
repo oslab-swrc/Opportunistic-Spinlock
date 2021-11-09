@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _GEN_PV_LOCK_SLOWPATH
 #error "do not include this file"
 #endif
@@ -516,7 +517,9 @@ __pv_queued_spin_unlock_slowpath(struct qspinlock *lock, u8 locked)
 	 * the unlock.
 	 */
 	qstat_inc(qstat_pv_kick_unlock, true);
-	pv_kick(node->cpu);
+
+	pv_kick(node->cpu) ;
+
 }
 
 /*

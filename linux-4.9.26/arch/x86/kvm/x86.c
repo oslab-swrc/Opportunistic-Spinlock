@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Kernel-based Virtual Machine driver for Linux
  *
@@ -6001,6 +6002,81 @@ int kvm_emulate_halt(struct kvm_vcpu *vcpu)
 }
 EXPORT_SYMBOL_GPL(kvm_emulate_halt);
 
+#ifdef CONFIG_QUEUED_SWPLE
+static int kvm_vcpu_update_sched_priority(struct kvm_vcpu *vcpu, bool upgrade)
+{
+    struct pid *pid;
+    struct task_struct *task = NULL;
+    int ret = -1;
+       struct sched_param param;
+
+    rcu_read_lock();
+    pid = rcu_dereference(vcpu->pid);
+    if (pid)
+        task = get_pid_task(pid, PIDTYPE_PID);
+    rcu_read_unlock();
+
+    if (!task)
+        goto policy_out;
+
+       if (upgrade) {
+               param.sched_priority = MAX_RT_PRIO / 2;
+               ret = sched_setscheduler(task, SCHED_RR, &param);
+               if (ret)
+                       goto policy_out;
+       } else {
+               param.sched_priority = 0;
+               ret = sched_setscheduler(task, SCHED_NORMAL, &param);
+               if (ret)
+                       goto policy_out;
+               set_user_nice(task, 0);
+       }
+       ret = 0;
+
+ policy_out:
+    return ret;
+}
+
+static void kvm_pv_kick_cpu_op(struct kvm_vcpu *vcpu, unsigned long flags, int apicid)
+{
+        struct kvm *kvm = vcpu->kvm ;
+        unsigned long holder_vcpu_id = flags ;
+        struct kvm_vcpu *next_vcpu = kvm->vcpus[holder_vcpu_id] ;
+        struct kvm_vcpu_spinlock_stat *s_next = &next_vcpu->vcpu_spinlock_stat ;
+        int ret ;
+        struct kvm_lapic_irq lapic_irq;
+
+
+        /*if ( ACCESS_ONCE(next_vcpu->preempted))
+                ++next_vcpu->stat.no_lwps ;
+        */
+
+         ret = kvm_vcpu_update_sched_priority(next_vcpu, true) ;
+        if ( unlikely(ret) ) {
+                        printk(KERN_INFO "updating sched did not work\n") ;
+                }
+
+        lapic_irq.shorthand = 0;
+        lapic_irq.dest_mode = 0;
+        lapic_irq.dest_id = apicid;
+        lapic_irq.msi_redir_hint = false;
+
+        lapic_irq.delivery_mode = APIC_DM_REMRD;
+        kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
+
+        s_next->halted_vcpu = false ;
+
+        /*set_bit(holder_vcpu_id, kvm->vcpu_lock_holder);
+        clear_bit(vcpu->vcpu_id, kvm->vcpu_lock_holder) ;
+
+        smp_wmb() ;
+        */
+
+        if(!ret)
+                kvm_vcpu_update_sched_priority(vcpu, false) ;
+
+}
+#else
 /*
  * kvm_pv_kick_cpu_op:  Kick a vcpu.
  *
@@ -6018,6 +6094,111 @@ static void kvm_pv_kick_cpu_op(struct kvm *kvm, unsigned long flags, int apicid)
 	lapic_irq.delivery_mode = APIC_DM_REMRD;
 	kvm_irq_delivery_to_apic(kvm, NULL, &lapic_irq, NULL);
 }
+#endif
+
+
+#ifdef CONFIG_QUEUED_SWPLE
+#define MAX_YIELD_TRIES (3)
+#define CONFIG_KVM_ENABLE_COYIELD
+
+static bool kvm_vcpu_spin_halt(struct kvm_vcpu *me, struct kvm *kvm)
+{
+       struct kvm_vcpu *vcpu;
+       int i, yielded = 0, pass, tries = MAX_YIELD_TRIES;
+       int last_boosted_vcpu;
+
+#ifdef CONFIG_KVM_ENABLE_COYIELD
+       smp_rmb();
+#endif
+
+       if (!me)
+               me = kvm->vcpus[kvm->last_boosted_vcpu];
+
+       last_boosted_vcpu = me->vcpu_spinlock_stat.last_boosted_vcpu;
+
+       /*
+        * Difference between this algorithm and PLE handling algorithm:
+        * - PLE never goes to sleep, however this can
+        */
+       for (pass = 0; pass < 2 && !yielded && tries; pass++) {
+               /* first check how many threads are running */
+               kvm_for_each_vcpu(i, vcpu, kvm) {
+                       if (single_task_running())
+                               goto spin_out;
+                       if (!pass && i <= last_boosted_vcpu) {
+                               i = last_boosted_vcpu;
+                               continue;
+                      } else if (pass && i > last_boosted_vcpu)
+                               break;
+                       if (vcpu == me)
+                               continue;
+                       if (!ACCESS_ONCE(vcpu->preempted))
+                               continue;
+                       if (ACCESS_ONCE(vcpu->vcpu_spinlock_stat.halted_vcpu))
+                               continue;
+                       if (swait_active(&vcpu->wq) && !kvm_arch_vcpu_runnable(vcpu))
+                               continue;
+                       yielded = kvm_vcpu_yield_to(vcpu);
+                       if (yielded > 0) {
+//                               ++me->stat.hlt_yields;
+                               me->vcpu_spinlock_stat.last_boosted_vcpu = i;
+#ifdef CONFIG_KVM_ENABLE_COYIELD
+                               WRITE_ONCE(kvm->last_boosted_vcpu, i);
+#endif
+                               goto spin_out;
+                       } else if (yielded < 0) {
+                               tries--;
+                               if (!tries)
+                                       break;
+                       }
+               }
+       }
+       return false;
+
+ spin_out:
+       return true;
+}
+
+static void kvm_pv_halt_cpu_op(struct kvm_vcpu *vcpu)
+{
+       struct kvm_vcpu_spinlock_stat *spinlock_stat = &vcpu->vcpu_spinlock_stat;
+       struct kvm *kvm = vcpu->kvm;
+#ifdef CONFIG_KVM_ENABLE_COYIELD
+       struct kvm *cur_kvm;
+#endif
+
+       spinlock_stat->halted_vcpu = true;
+
+#ifdef CONFIG_KVM_GLOBAL_LOCK_HOLDER_LIST
+       clear_bit(vcpu->vcpu_id, kvm->vcpu_lock_holder);
+#endif
+
+        smp_wmb();
+
+       if (kvm_vcpu_spin_halt(vcpu, kvm))
+               goto yield_out;
+
+        else
+                {
+#if 0
+                     list_for_each_entry(cur_kvm, &vm_list, vm_list) {
+                               if (kvm == cur_kvm)
+                                       continue;
+                               if (kvm_vcpu_spin_halt(NULL, cur_kvm)) {
+                                       ++vcpu->stat.no_coyields;
+                                       goto yield_out;
+                               }
+                     }
+#endif
+                }
+        kvm_vcpu_halt(vcpu) ;
+
+yield_out:
+        return ;
+}
+#endif
+
+
 
 void kvm_vcpu_deactivate_apicv(struct kvm_vcpu *vcpu)
 {
@@ -6062,9 +6243,19 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		ret = 0;
 		break;
 	case KVM_HC_KICK_CPU:
+#ifdef CONFIG_QUEUED_SWPLE
+                kvm_pv_kick_cpu_op(vcpu, a0, a1);
+#else
 		kvm_pv_kick_cpu_op(vcpu->kvm, a0, a1);
+#endif
 		ret = 0;
 		break;
+#ifdef CONFIG_QUEUED_SWPLE
+        case KVM_HC_HALT_CPU:
+                kvm_pv_halt_cpu_op(vcpu) ;
+                ret =0 ;
+                break ;
+#endif
 	default:
 		ret = -KVM_ENOSYS;
 		break;

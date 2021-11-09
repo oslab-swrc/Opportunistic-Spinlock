@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Kernel-based Virtual Machine driver for Linux
  *
@@ -168,6 +169,17 @@ module_param(ple_window_shrink, int, S_IRUGO);
 static int ple_window_actual_max = KVM_VMX_DEFAULT_PLE_WINDOW_MAX;
 static int ple_window_max        = KVM_VMX_DEFAULT_PLE_WINDOW_MAX;
 module_param(ple_window_max, int, S_IRUGO);
+
+
+#define CONFIG_QUEUED_SWPLE
+#ifdef CONFIG_QUEUED_SWPLE
+static int ple_count[128]={0,};
+static int ple_count_num=128;
+module_param_array(ple_count, int, &ple_count_num, S_IRUGO) ;
+int hlt_hypercalls[128]={0,};
+int hlt_hypercalls_count=128;
+module_param_array(hlt_hypercalls, int, &hlt_hypercalls_count, S_IRUGO) ;
+#endif
 
 extern const ulong vmx_return;
 
@@ -6603,6 +6615,10 @@ static int handle_pause(struct kvm_vcpu *vcpu)
 {
 	if (ple_gap)
 		grow_ple_window(vcpu);
+
+#ifdef CONFIG_QUEUED_SWPLE
+        ple_count[smp_processor_id()]++ ;
+#endif
 
 	skip_emulated_instruction(vcpu);
 	kvm_vcpu_on_spin(vcpu);
