@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef __KVM_HOST_H
 #define __KVM_HOST_H
 
@@ -61,6 +62,8 @@
 #define KVM_PFN_ERR_FAULT	(KVM_PFN_ERR_MASK)
 #define KVM_PFN_ERR_HWPOISON	(KVM_PFN_ERR_MASK + 1)
 #define KVM_PFN_ERR_RO_FAULT	(KVM_PFN_ERR_MASK + 2)
+
+extern int allow_other_vm_yielding;
 
 /*
  * error pfns indicate that the gfn is in slot but faild to
@@ -197,8 +200,27 @@ struct kvm_mmio_fragment {
 	unsigned len;
 };
 
+struct kvm_vcpu_spinlock_stat {
+	struct kvm *kvm;
+	struct kvm_vcpu *vcpu;
+
+	struct {
+		__ticket_t ticket_number; /* my ticket # */
+		__ticket_t ticket_holder; /* holder ticket # */
+		int holder_vcpu_id;		  /* holder vcpu id */
+	} ticket_info;
+
+	u64 spin_instance;			  /* spinlock instance */
+	u64 order;				  /* ordering / versioning */
+	bool halted_vcpu;		  /* will tell that this is not the holder */
+	bool spin_sync;			  /* need to know whether it is contending or not */
+	int last_boosted_vcpu;	  /* whom this vcpu boosted to */
+	bool prioritized_vcpu;	  /* decreasing lhps */
+};
+
 struct kvm_vcpu {
 	struct kvm *kvm;
+	struct kvm_vcpu_spinlock_stat vcpu_spinlock_stat;
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	struct preempt_notifier preempt_notifier;
 #endif
@@ -256,6 +278,7 @@ struct kvm_vcpu {
 	} spin_loop;
 #endif
 	bool preempted;
+	volatile bool lhp_start_monitor;
 	struct kvm_vcpu_arch arch;
 };
 
@@ -343,6 +366,7 @@ static inline int kvm_arch_vcpu_memslots_id(struct kvm_vcpu *vcpu)
 }
 #endif
 
+
 /*
  * Note:
  * memslots are not sorted by id anymore, please use id_to_memslot()
@@ -406,6 +430,11 @@ struct kvm {
 #endif
 	long tlbs_dirty;
 	struct list_head devices;
+
+	/*
+	 * global ticket spinlock stat for each vcpu
+	 */
+	DECLARE_BITMAP(vcpu_lock_holder, KVM_MAX_VCPUS);
 };
 
 #define kvm_err(fmt, ...) \
@@ -444,6 +473,11 @@ static inline struct kvm_vcpu *kvm_get_vcpu(struct kvm *kvm, int i)
 	     (vcpup = kvm_get_vcpu(kvm, idx)) != NULL; \
 	     idx++)
 
+#define kvm_for_each_id_ordered_vcpu(idx, vcpup, kvm) \
+	for (idx = 0; \
+	     idx < atomic_read(&kvm->online_vcpus) && \
+	     (vcpup = kvm_get_id_ordered_vcpu(kvm, idx)) != NULL; \
+	     idx++)
 static inline struct kvm_vcpu *kvm_get_vcpu_by_id(struct kvm *kvm, int id)
 {
 	struct kvm_vcpu *vcpu;
@@ -646,6 +680,7 @@ int kvm_vcpu_write_guest_page(struct kvm_vcpu *vcpu, gfn_t gfn, const void *data
 int kvm_vcpu_write_guest(struct kvm_vcpu *vcpu, gpa_t gpa, const void *data,
 			 unsigned long len);
 void kvm_vcpu_mark_page_dirty(struct kvm_vcpu *vcpu, gfn_t gfn);
+int kvm_vcpu_check_block(struct kvm_vcpu *vcpu);
 
 void kvm_vcpu_block(struct kvm_vcpu *vcpu);
 void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu);
@@ -653,6 +688,7 @@ void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu);
 void kvm_vcpu_kick(struct kvm_vcpu *vcpu);
 int kvm_vcpu_yield_to(struct kvm_vcpu *target);
 void kvm_vcpu_on_spin(struct kvm_vcpu *vcpu);
+void kvm_enlightened_vcpu_on_spin(struct kvm_vcpu *vcpu);
 void kvm_load_guest_fpu(struct kvm_vcpu *vcpu);
 void kvm_put_guest_fpu(struct kvm_vcpu *vcpu);
 
@@ -930,6 +966,8 @@ search_memslots(struct kvm_memslots *slots, gfn_t gfn)
 
 	return NULL;
 }
+
+extern unsigned int enable_halt_ple;
 
 static inline struct kvm_memory_slot *
 __gfn_to_memslot(struct kvm_memslots *slots, gfn_t gfn)

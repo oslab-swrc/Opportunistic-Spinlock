@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI__LINUX_KVM_PARA_H
 #define _UAPI__LINUX_KVM_PARA_H
 
@@ -23,6 +24,7 @@
 #define KVM_HC_MIPS_GET_CLOCK_FREQ	6
 #define KVM_HC_MIPS_EXIT_VM		7
 #define KVM_HC_MIPS_CONSOLE_OUTPUT	8
+#define KVM_HC_HALT_CPU         9
 
 /*
  * hypercalls use architecture specific

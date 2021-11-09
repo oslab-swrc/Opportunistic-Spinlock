@@ -236,7 +236,7 @@ config LOCK_SPIN_ON_OWNER
        depends on MUTEX_SPIN_ON_OWNER || RWSEM_SPIN_ON_OWNER
 
 config ARCH_USE_QUEUED_SPINLOCKS
-	bool
+	def_bool n
 
 config QUEUED_SPINLOCKS
 	def_bool y if ARCH_USE_QUEUED_SPINLOCKS
